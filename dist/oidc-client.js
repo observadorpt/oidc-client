@@ -7895,6 +7895,8 @@ function OidcClient(settings) {
     });
 }
 
+OidcClient.parseOidcResult = parseOidcResult;
+
 OidcClient.prototype.loadMetadataAsync = function () {
     log("OidcClient.loadMetadataAsync");
 
@@ -8284,7 +8286,7 @@ OidcClient.prototype.processResponseAsync = function (queryString) {
 
     return promise.then(function (profile) {
         if (profile && settings.filter_protocol_claims) {
-            var remove = ["nonce", "at_hash", "iat", "nbf", "exp", "aud", "iss", "idp"];
+            var remove = ["nonce", "at_hash", "iat", "nbf", "exp", "aud", "iss"];
             remove.forEach(function (key) {
                 delete profile[key];
             });
