@@ -155,6 +155,58 @@ OidcClient.prototype.loadMetadataAsync = function () {
         });
 };
 
+OidcClient.prototype.loadSigningKeyAsync = function () {
+    var client = this;
+    var cert = client.loadNakedSigningKeyAsync();
+    if (cert) {
+        return cert;
+    }
+    return client.loadX509SigningKeyAsync();
+};
+
+OidcClient.prototype.loadNakedSigningKeyAsync = function () {
+    log("OidcClient.loadNakedSigningKeyAsync");
+
+    var settings = this._settings;
+
+    function getKeyAsync(jwks) {
+        if (!jwks.keys || !jwks.keys.length) {
+            log("Signing keys empty");
+            return;
+        }
+
+        var key = jwks.keys[0];
+        if (key.kty !== "RSA") {
+            log("Signing key not RSA");
+            return;
+        }
+
+        if (!key.e || !key.n) {
+            log("RSA keys empty");
+            return;
+        }
+
+        return _promiseFactory.resolve(key);
+    }
+
+    if (settings.jwks) {
+        return getKeyAsync(settings.jwks);
+    }
+
+    return this.loadMetadataAsync().then(function (metadata) {
+        if (!metadata.jwks_uri) {
+            return error("Metadata does not contain jwks_uri");
+        }
+
+        return getJson(metadata.jwks_uri).then(function (jwks) {
+            settings.jwks = jwks;
+            return getKeyAsync(jwks);
+        }, function (err) {
+            return error("Failed to load signing keys (" + err.message + ")");
+        });
+    });
+};
+
 OidcClient.prototype.loadX509SigningKeyAsync = function () {
     log("OidcClient.loadX509SigningKeyAsync");
 
@@ -162,16 +214,19 @@ OidcClient.prototype.loadX509SigningKeyAsync = function () {
 
     function getKeyAsync(jwks) {
         if (!jwks.keys || !jwks.keys.length) {
-            return error("Signing keys empty");
+            log("Signing keys empty");
+            return;
         }
 
         var key = jwks.keys[0];
         if (key.kty !== "RSA") {
-            return error("Signing key not RSA");
+            log("Signing key not RSA");
+            return;
         }
 
         if (!key.x5c || !key.x5c.length) {
-            return error("RSA keys empty");
+            log("RSA keys empty");
+            return;
         }
 
         return _promiseFactory.resolve(key.x5c[0]);
@@ -303,10 +358,18 @@ OidcClient.prototype.validateIdTokenAsync = function (id_token, nonce, access_to
     var client = this;
     var settings = client._settings;
 
-    return client.loadX509SigningKeyAsync().then(function (cert) {
+    return client.loadSigningKeyAsync().then(function (cert) {
 
         var jws = new KJUR.jws.JWS();
-        if (jws.verifyJWSByPemX509Cert(id_token, cert)) {
+        var j;
+        console.log(b64utohex(cert.n));
+        if (cert.e) {
+               j = jws.verifyJWSByNE(id_token, b64utohex(cert.n), b64utohex(cert.e));
+        } else {
+               j = jws.verifyJWSByPemX509Cert(id_token, cert);
+        }
+        console.log(j);
+        if (j) {
             var id_token_contents = JSON.parse(jws.parsedJWS.payloadS);
 
             if (nonce !== id_token_contents.nonce) {
@@ -367,7 +430,7 @@ OidcClient.prototype.validateAccessTokenAsync = function (id_token_contents, acc
     var left = hash.substr(0, hash.length / 2);
     var left_b64u = hextob64u(left);
 
-    if (left_b64u !== id_token_contents.at_hash) {
+    if (left_b64u !== id_token_contents.at_hash.replace(/\=/g, "")) {
         return error("at_hash failed to validate");
     }
 
